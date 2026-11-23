@@ -1,0 +1,924 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, maximum-scale=1.0">
+    <title>3D VR Cozy Room - Google Cardboard Viewer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/effects/StereoEffect.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/DeviceOrientationControls.js"></script>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            user-select: none;
+            -webkit-user-select: none;
+            background-color: #0d1117;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        #webgl-container {
+            width: 100vw;
+            height: 100vh;
+            display: block;
+        }
+        /* Reticle Gaze Cursor styling */
+        #reticle-container {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+            z-index: 20;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .stereo-active #reticle-container {
+            display: none; /* In Stereo mode, reticle is drawn in 3D scene */
+        }
+        .reticle-ring {
+            width: 32px;
+            height: 32px;
+            border: 2px solid rgba(255, 255, 255, 0.4);
+            border-radius: 50%;
+            position: absolute;
+            transition: transform 0.1s linear, border-color 0.2s ease;
+        }
+        .reticle-dot {
+            width: 6px;
+            height: 6px;
+            background-color: #ffffff;
+            border-radius: 50%;
+            position: absolute;
+            box-shadow: 0 0 4px rgba(0,0,0,0.5);
+        }
+        .reticle-progress {
+            width: 38px;
+            height: 38px;
+            position: absolute;
+            transform: rotate(-90deg);
+        }
+        .reticle-progress circle {
+            fill: none;
+            stroke: #3b82f6;
+            stroke-width: 3;
+            stroke-linecap: round;
+            stroke-dasharray: 100;
+            stroke-dashoffset: 100;
+            transition: stroke-dashoffset 0.05s linear;
+        }
+        /* Cardboard Split Divider */
+        #vr-divider {
+            position: absolute;
+            top: 0;
+            left: 50%;
+            width: 2px;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.8);
+            transform: translateX(-50%);
+            z-index: 15;
+            display: none;
+        }
+        .stereo-active #vr-divider {
+            display: block;
+        }
+        /* Glow animations for UI */
+        .glow-effect {
+            box-shadow: 0 0 15px rgba(59, 130, 246, 0.5);
+        }
+    </style>
+</head>
+<body class="text-white overflow-hidden">
+
+    <div id="webgl-container"></div>
+    <div id="vr-divider"></div>
+
+    <!-- 2D Reticle Gaze Cursor Overlay (For Single View Mode) -->
+    <div id="reticle-container">
+        <div class="reticle-ring" id="reticle-ring"></div>
+        <div class="reticle-dot"></div>
+        <svg class="reticle-progress">
+            <circle id="gaze-progress-circle" cx="19" cy="19" r="16"></circle>
+        </svg>
+    </div>
+
+    <!-- UI Overlay Header & Controls -->
+    <div id="ui-overlay" class="absolute top-0 left-0 w-full p-4 flex justify-between items-center z-30 pointer-events-none transition-opacity duration-300">
+        <div class="bg-gray-900/80 backdrop-blur-md px-4 py-2 rounded-xl border border-gray-700/50 flex items-center gap-3 pointer-events-auto shadow-lg">
+            <div class="w-3 h-3 rounded-full bg-emerald-500 animate-pulse"></div>
+            <div>
+                <h1 class="text-sm font-bold text-gray-100">Cozy Room 3D VR</h1>
+                <p class="text-xs text-gray-400" id="status-text">Mode: Window / Orbit</p>
+            </div>
+        </div>
+
+        <!-- Action Controls -->
+        <div class="flex gap-2 pointer-events-auto">
+            <button id="btn-recenter" class="hidden bg-gray-800/80 hover:bg-gray-700 text-xs px-3 py-2 rounded-lg border border-gray-600 transition flex items-center gap-1">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                Recenter
+            </button>
+            <button id="btn-vr" class="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold px-4 py-2 rounded-xl shadow-lg border border-indigo-400/30 transition flex items-center gap-2 glow-effect">
+                <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M21 6H3c-1.1 0-2 .9-2 2v8c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm-10 7c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm6 0c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2z"/></svg>
+                Google Cardboard VR
+            </button>
+        </div>
+    </div>
+
+    <!-- Interactive Info Panel / Instructions Drawer -->
+    <div id="instructions-modal" class="absolute bottom-4 left-1/2 -translate-x-1/2 bg-gray-900/90 backdrop-blur-md px-5 py-3 rounded-2xl border border-gray-700/60 z-30 pointer-events-auto text-center max-w-md w-11/12 shadow-2xl transition-all duration-300">
+        <p class="text-xs text-gray-300 mb-1 font-medium">
+            💡 <span class="text-indigo-400 font-semibold">Gaze Cursor Interaction:</span> Look at the <span class="text-amber-300">Desk Lamp</span> or <span class="text-cyan-300">Fan Base</span> for 1.5s to trigger actions.
+        </p>
+        <p class="text-[11px] text-gray-400">
+            Tap <b>Cardboard VR</b> for split-screen stereo. Insert phone into your VR goggles.
+        </p>
+    </div>
+
+    <!-- Audio Synth Feedback Logic -->
+    <script>
+        class SoundFX {
+            constructor() {
+                this.ctx = null;
+                this.fanOsc = null;
+                this.fanGain = null;
+                this.isFanPlaying = false;
+            }
+
+            init() {
+                if (!this.ctx) {
+                    const AudioContext = window.AudioContext || window.webkitAudioContext;
+                    this.ctx = new AudioContext();
+                }
+                if (this.ctx.state === 'suspended') {
+                    this.ctx.resume();
+                }
+            }
+
+            playClick() {
+                this.init();
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(800, this.ctx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(400, this.ctx.currentTime + 0.05);
+                gain.gain.setValueAtTime(0.15, this.ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.05);
+                osc.connect(gain);
+                gain.connect(this.ctx.destination);
+                osc.start();
+                osc.stop(this.ctx.currentTime + 0.05);
+            }
+
+            setFanSpeed(speed) { // 0, 1, 2, 3
+                this.init();
+                if (speed === 0) {
+                    if (this.fanGain) {
+                        this.fanGain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.2);
+                    }
+                    return;
+                }
+
+                if (!this.fanOsc) {
+                    // Create fan noise simulation using low freq oscillator + noise
+                    this.fanOsc = this.ctx.createOscillator();
+                    this.fanGain = this.ctx.createGain();
+                    this.fanOsc.type = 'triangle';
+                    this.fanOsc.frequency.setValueAtTime(50, this.ctx.currentTime);
+                    this.fanGain.gain.setValueAtTime(0, this.ctx.currentTime);
+                    this.fanOsc.connect(this.fanGain);
+                    this.fanGain.connect(this.ctx.destination);
+                    this.fanOsc.start();
+                }
+
+                const targetFreq = 40 + speed * 25;
+                const targetGain = 0.04 + speed * 0.02;
+                this.fanOsc.frequency.setTargetAtTime(targetFreq, this.ctx.currentTime, 0.3);
+                this.fanGain.gain.setTargetAtTime(targetGain, this.ctx.currentTime, 0.3);
+            }
+        }
+
+        const audioFX = new SoundFX();
+    </script>
+
+    <!-- Main 3D Three.js VR Application Logic -->
+    <script>
+        // Global App State
+        const state = {
+            isVR: false,
+            isGyroAvailable: false,
+            fanSpeed: 1, // 0: Off, 1: Low, 2: Med, 3: High
+            fanOscillating: true,
+            lampOn: true,
+            roomLightOn: true,
+            clockTime: 0
+        };
+
+        // DOM Elements
+        const container = document.getElementById('webgl-container');
+        const btnVR = document.getElementById('btn-vr');
+        const btnRecenter = document.getElementById('btn-recenter');
+        const statusText = document.getElementById('status-text');
+        const gazeProgressCircle = document.getElementById('gaze-progress-circle');
+
+        // Three.js Core Variables
+        let scene, camera, renderer, stereoEffect;
+        let orbitControls, deviceControls;
+        let raycaster, centerVector;
+        let interactiveObjects = [];
+
+        // Dynamic Room Object References
+        let fanBlades, fanHeadGroup;
+        let deskLampLight, deskLampBulbMat;
+        let clockSecondHand, clockMinuteHand, clockHourHand;
+
+        // Gaze Interaction Variables
+        let currentTarget = null;
+        let gazeStartTime = 0;
+        const GAZE_DURATION = 1500; // 1.5 seconds gaze trigger
+
+        const clock = new THREE.Clock();
+
+        // Initialize Application
+        init();
+        animate();
+
+        function init() {
+            // 1. Scene Setup
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x0a0c10);
+            scene.fog = new THREE.FogExp2(0x0a0c10, 0.02);
+
+            // 2. Camera Setup (Positioned inside room facing desk & window)
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 100);
+            camera.position.set(0, 1.4, 0.8); // Ergonomic eye-level height in meters
+
+            // 3. Renderer Setup
+            renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            renderer.shadowMap.enabled = true;
+            renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+            renderer.toneMapping = THREE.ACESFilmicToneMapping;
+            renderer.toneMappingExposure = 1.0;
+            container.appendChild(renderer.domElement);
+
+            // Stereo Effect for Google Cardboard
+            stereoEffect = new THREE.StereoEffect(renderer);
+            stereoEffect.setSize(window.innerWidth, window.innerHeight);
+
+            // 4. Controls Setup
+            orbitControls = new THREE.OrbitControls(camera, renderer.domElement);
+            orbitControls.enableDamping = true;
+            orbitControls.dampingFactor = 0.05;
+            orbitControls.maxPolarAngle = Math.PI - 0.05;
+            orbitControls.minDistance = 0.1;
+            orbitControls.maxDistance = 10;
+            orbitControls.target.set(0, 1.2, -1.2);
+
+            // Device Orientation Controls (Gyroscope)
+            deviceControls = new THREE.DeviceOrientationControls(camera);
+
+            // Raycaster for Gaze
+            raycaster = new THREE.Raycaster();
+            centerVector = new THREE.Vector2(0, 0);
+
+            // 5. Build Procedural 3D Environment
+            createLighting();
+            createRoom();
+            createBed();
+            createDeskAndChair();
+            createOscillatingFan();
+            createDeskLamp();
+            createBookshelf();
+            createDecorations();
+
+            // 6. Event Listeners
+            window.addEventListener('resize', onWindowResize, false);
+            setupDeviceOrientation();
+
+            btnVR.addEventListener('click', toggleVRMode);
+            btnRecenter.addEventListener('click', () => {
+                if (deviceControls) deviceControls.update();
+            });
+
+            // Touch / Click fallback trigger for non-gaze interaction
+            window.addEventListener('pointerdown', onPointerDown);
+        }
+
+        function createLighting() {
+            // Ambient soft lighting
+            const ambientLight = new THREE.AmbientLight(0x3a4b6e, 0.6);
+            scene.add(ambientLight);
+
+            // Main Room Ceiling Light
+            const ceilingLight = new THREE.PointLight(0xfff1e0, 0.9, 8);
+            ceilingLight.position.set(0, 2.7, 0);
+            ceilingLight.castShadow = true;
+            ceilingLight.shadow.mapSize.width = 1024;
+            ceilingLight.shadow.mapSize.height = 1024;
+            ceilingLight.shadow.bias = -0.002;
+            scene.add(ceilingLight);
+
+            // Moon/Window Light
+            const windowLight = new THREE.DirectionalLight(0x7aa2f7, 0.8);
+            windowLight.position.set(-3, 3, -4);
+            scene.add(windowLight);
+        }
+
+        function createRoom() {
+            const roomGroup = new THREE.Group();
+
+            // Procedural Canvas Wood Floor Texture
+            const floorCanvas = document.createElement('canvas');
+            floorCanvas.width = 512;
+            floorCanvas.height = 512;
+            const ctx = floorCanvas.getContext('2d');
+            ctx.fillStyle = '#4a2e1b';
+            ctx.fillRect(0, 0, 512, 512);
+            ctx.fillStyle = '#3b2313';
+            for (let i = 0; i < 512; i += 32) {
+                ctx.fillRect(0, i, 512, 2);
+                for (let j = 0; j < 512; j += 64) {
+                    ctx.fillRect((i % 64 === 0 ? j : j + 32), i, 2, 32);
+                }
+            }
+            const floorTex = new THREE.CanvasTexture(floorCanvas);
+            floorTex.wrapS = THREE.RepeatWrapping;
+            floorTex.wrapT = THREE.RepeatWrapping;
+            floorTex.repeat.set(4, 4);
+
+            // Materials
+            const floorMat = new THREE.MeshStandardMaterial({ map: floorTex, roughness: 0.4, metalness: 0.1 });
+            const wallMat = new THREE.MeshStandardMaterial({ color: 0x21262d, roughness: 0.9 });
+            const ceilingMat = new THREE.MeshStandardMaterial({ color: 0x161b22, roughness: 1.0 });
+
+            // Room Dimensions: 4m wide, 3m high, 4m deep
+            const roomWidth = 4, roomHeight = 3, roomDepth = 4;
+
+            // Floor
+            const floor = new THREE.Mesh(new THREE.PlaneGeometry(roomWidth, roomDepth), floorMat);
+            floor.rotation.x = -Math.PI / 2;
+            floor.receiveShadow = true;
+            roomGroup.add(floor);
+
+            // Ceiling
+            const ceiling = new THREE.Mesh(new THREE.PlaneGeometry(roomWidth, roomDepth), ceilingMat);
+            ceiling.position.y = roomHeight;
+            ceiling.rotation.x = Math.PI / 2;
+            roomGroup.add(ceiling);
+
+            // Back Wall
+            const backWall = new THREE.Mesh(new THREE.PlaneGeometry(roomWidth, roomHeight), wallMat);
+            backWall.position.set(0, roomHeight / 2, -roomDepth / 2);
+            backWall.receiveShadow = true;
+            roomGroup.add(backWall);
+
+            // Left Wall
+            const leftWall = new THREE.Mesh(new THREE.PlaneGeometry(roomDepth, roomHeight), wallMat);
+            leftWall.position.set(-roomWidth / 2, roomHeight / 2, 0);
+            leftWall.rotation.y = Math.PI / 2;
+            leftWall.receiveShadow = true;
+            roomGroup.add(leftWall);
+
+            // Right Wall
+            const rightWall = new THREE.Mesh(new THREE.PlaneGeometry(roomDepth, roomHeight), wallMat);
+            rightWall.position.set(roomWidth / 2, roomHeight / 2, 0);
+            rightWall.rotation.y = -Math.PI / 2;
+            rightWall.receiveShadow = true;
+            roomGroup.add(rightWall);
+
+            // Front Wall
+            const frontWall = new THREE.Mesh(new THREE.PlaneGeometry(roomWidth, roomHeight), wallMat);
+            frontWall.position.set(0, roomHeight / 2, roomDepth / 2);
+            frontWall.rotation.y = Math.PI;
+            roomGroup.add(frontWall);
+
+            // Window cutout simulation on back wall
+            const windowFrameMat = new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.5 });
+            const windowFrame = new THREE.Mesh(new THREE.BoxGeometry(1.6, 1.2, 0.05), windowFrameMat);
+            windowFrame.position.set(0, 1.8, -roomDepth / 2 + 0.02);
+
+            // Outdoor Sky Backdrop Mesh
+            const skyGeo = new THREE.PlaneGeometry(1.5, 1.1);
+            const skyMat = new THREE.MeshBasicMaterial({ color: 0x1e293b }); // Deep night sky
+            const skyMesh = new THREE.Mesh(skyGeo, skyMat);
+            skyMesh.position.set(0, 1.8, -roomDepth / 2 + 0.01);
+
+            // Moon in window
+            const moonMesh = new THREE.Mesh(
+                new THREE.CircleGeometry(0.15, 32),
+                new THREE.MeshBasicMaterial({ color: 0xfef08a })
+            );
+            moonMesh.position.set(0.4, 2.1, -roomDepth / 2 + 0.015);
+
+            roomGroup.add(windowFrame, skyMesh, moonMesh);
+            scene.add(roomGroup);
+        }
+
+        function createBed() {
+            const bedGroup = new THREE.Group();
+            bedGroup.position.set(-1.2, 0, -1.0);
+
+            const woodMat = new THREE.MeshStandardMaterial({ color: 0x3d2314, roughness: 0.7 });
+            const mattressMat = new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.9 });
+            const blanketMat = new THREE.MeshStandardMaterial({ color: 0x2563eb, roughness: 0.8 });
+            const pillowMat = new THREE.MeshStandardMaterial({ color: 0xe2e8f0, roughness: 0.9 });
+
+            // Bed Frame
+            const frame = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.3, 2.0), woodMat);
+            frame.position.y = 0.15;
+            frame.castShadow = true;
+            frame.receiveShadow = true;
+
+            // Headboard
+            const headboard = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.9, 0.1), woodMat);
+            headboard.position.set(0, 0.45, -0.95);
+            headboard.castShadow = true;
+
+            // Mattress
+            const mattress = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.25, 1.9), mattressMat);
+            mattress.position.y = 0.35;
+            mattress.castShadow = true;
+
+            // Blanket
+            const blanket = new THREE.Mesh(new THREE.BoxGeometry(1.32, 0.26, 1.3), blanketMat);
+            blanket.position.set(0, 0.36, 0.3);
+            blanket.castShadow = true;
+
+            // Pillow
+            const pillow = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.12, 0.4), pillowMat);
+            pillow.position.set(0, 0.5, -0.7);
+            pillow.rotation.x = 0.1;
+            pillow.castShadow = true;
+
+            bedGroup.add(frame, headboard, mattress, blanket, pillow);
+            scene.add(bedGroup);
+        }
+
+        function createDeskAndChair() {
+            const deskGroup = new THREE.Group();
+            deskGroup.position.set(0.9, 0, -1.3);
+
+            const woodMat = new THREE.MeshStandardMaterial({ color: 0x543310, roughness: 0.6 });
+            const metalMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, metalness: 0.8, roughness: 0.3 });
+
+            // Table Top
+            const tableTop = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.06, 0.8), woodMat);
+            tableTop.position.y = 0.73;
+            tableTop.castShadow = true;
+            tableTop.receiveShadow = true;
+            deskGroup.add(tableTop);
+
+            // Table Legs
+            const legGeo = new THREE.BoxGeometry(0.06, 0.7, 0.06);
+            const legPositions = [
+                [-0.63, 0.35, -0.33],
+                [0.63, 0.35, -0.33],
+                [-0.63, 0.35, 0.33],
+                [0.63, 0.35, 0.33]
+            ];
+            legPositions.forEach(pos => {
+                const leg = new THREE.Mesh(legGeo, metalMat);
+                leg.position.set(...pos);
+                leg.castShadow = true;
+                deskGroup.add(leg);
+            });
+
+            // Laptop
+            const laptopGroup = new THREE.Group();
+            laptopGroup.position.set(-0.2, 0.76, 0);
+
+            const laptopBase = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.015, 0.22), metalMat);
+            laptopBase.castShadow = true;
+
+            const screenGroup = new THREE.Group();
+            screenGroup.position.set(0, 0, -0.11);
+            screenGroup.rotation.x = -1.8; // Open screen angle
+
+            const laptopScreenFrame = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.22, 0.01), metalMat);
+            laptopScreenFrame.position.y = 0.11;
+
+            const screenGlowMat = new THREE.MeshBasicMaterial({ color: 0x38bdf8 });
+            const laptopDisplay = new THREE.Mesh(new THREE.PlaneGeometry(0.3, 0.19), screenGlowMat);
+            laptopDisplay.position.set(0, 0.11, 0.006);
+
+            screenGroup.add(laptopScreenFrame, laptopDisplay);
+            laptopGroup.add(laptopBase, screenGroup);
+            deskGroup.add(laptopGroup);
+
+            // Chair
+            const chairGroup = new THREE.Group();
+            chairGroup.position.set(0.9, 0, -0.7);
+
+            const seat = new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.05, 0.45), woodMat);
+            seat.position.y = 0.45;
+            seat.castShadow = true;
+
+            const backrest = new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.4, 0.04), woodMat);
+            backrest.position.set(0, 0.68, 0.2);
+            backrest.castShadow = true;
+
+            chairGroup.add(seat, backrest);
+
+            const chairLegGeo = new THREE.CylinderGeometry(0.02, 0.015, 0.43);
+            const chairLegPos = [
+                [-0.18, 0.215, -0.18],
+                [0.18, 0.215, -0.18],
+                [-0.18, 0.215, 0.18],
+                [0.18, 0.215, 0.18]
+            ];
+            chairLegPos.forEach(pos => {
+                const leg = new THREE.Mesh(chairLegGeo, metalMat);
+                leg.position.set(...pos);
+                leg.castShadow = true;
+                chairGroup.add(leg);
+            });
+
+            scene.add(deskGroup);
+            scene.add(chairGroup);
+        }
+
+        function createOscillatingFan() {
+            const fanGroup = new THREE.Group();
+            // Position fan on right side of desk
+            fanGroup.position.set(1.2, 0.76, -1.2);
+
+            const plasticMat = new THREE.MeshStandardMaterial({ color: 0xe2e8f0, roughness: 0.3 });
+            const darkMat = new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.5 });
+            const bladeMat = new THREE.MeshStandardMaterial({ color: 0x0284c7, roughness: 0.2 });
+
+            // Fan Base (Interactive Gaze Target)
+            const baseGeo = new THREE.CylinderGeometry(0.12, 0.14, 0.03, 32);
+            const fanBase = new THREE.Mesh(baseGeo, plasticMat);
+            fanBase.castShadow = true;
+            fanBase.name = "fan_switch";
+            fanGroup.add(fanBase);
+
+            // Interactive Button on Base
+            const btnGeo = new THREE.CylinderGeometry(0.025, 0.025, 0.015, 16);
+            const btnMat = new THREE.MeshStandardMaterial({ color: 0xef4444 });
+            const switchBtn = new THREE.Mesh(btnGeo, btnMat);
+            switchBtn.position.set(0, 0.02, 0.07);
+            switchBtn.name = "fan_switch";
+            fanGroup.add(switchBtn);
+
+            // Register Interactive Object for Gaze Raycaster
+            interactiveObjects.push(fanBase);
+            interactiveObjects.push(switchBtn);
+
+            // Stand Stem
+            const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.02, 0.25, 16), plasticMat);
+            stem.position.y = 0.14;
+            stem.castShadow = true;
+            fanGroup.add(stem);
+
+            // Oscillating Head Group (Pivot point for left-right movement)
+            fanHeadGroup = new THREE.Group();
+            fanHeadGroup.position.y = 0.26;
+
+            // Motor Housing
+            const motorHousing = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.1, 24), plasticMat);
+            motorHousing.rotation.x = Math.PI / 2;
+            motorHousing.castShadow = true;
+            fanHeadGroup.add(motorHousing);
+
+            // Outer Wire Cage
+            const cageGeo = new THREE.TorusGeometry(0.16, 0.008, 12, 32);
+            const cage = new THREE.Mesh(cageGeo, darkMat);
+            cage.position.z = 0.05;
+            fanHeadGroup.add(cage);
+
+            // Fan Blades Group (Rotates dynamically)
+            fanBlades = new THREE.Group();
+            fanBlades.position.z = 0.05;
+
+            const bladeCenter = new THREE.Mesh(new THREE.SphereGeometry(0.03, 16, 16), bladeMat);
+            fanBlades.add(bladeCenter);
+
+            // 3 Blades
+            for (let i = 0; i < 3; i++) {
+                const bladeGeo = new THREE.BoxGeometry(0.04, 0.13, 0.004);
+                const blade = new THREE.Mesh(bladeGeo, bladeMat);
+                blade.position.y = 0.07;
+                blade.rotation.z = (i * Math.PI * 2) / 3;
+                blade.rotation.y = 0.2; // Angle pitch
+                
+                const bladePivot = new THREE.Group();
+                bladePivot.rotation.z = (i * Math.PI * 2) / 3;
+                bladePivot.add(blade);
+                fanBlades.add(bladePivot);
+            }
+
+            fanHeadGroup.add(fanBlades);
+            fanGroup.add(fanHeadGroup);
+
+            scene.add(fanGroup);
+        }
+
+        function createDeskLamp() {
+            const lampGroup = new THREE.Group();
+            lampGroup.position.set(0.5, 0.76, -1.4);
+
+            const brassMat = new THREE.MeshStandardMaterial({ color: 0xd97706, metalness: 0.7, roughness: 0.3 });
+
+            // Lamp Base (Interactive)
+            const lampBase = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.09, 0.02, 24), brassMat);
+            lampBase.castShadow = true;
+            lampBase.name = "lamp_switch";
+            lampGroup.add(lampBase);
+
+            interactiveObjects.push(lampBase);
+
+            // Stem
+            const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.01, 0.01, 0.35), brassMat);
+            stem.position.set(0, 0.175, -0.02);
+            stem.rotation.x = -0.2;
+            stem.castShadow = true;
+            lampGroup.add(stem);
+
+            // Shade
+            const shade = new THREE.Mesh(new THREE.ConeGeometry(0.1, 0.12, 24, 1, true), brassMat);
+            shade.position.set(0, 0.32, 0.06);
+            shade.rotation.x = 0.5;
+            shade.castShadow = true;
+            lampGroup.add(shade);
+
+            // Bulb
+            deskLampBulbMat = new THREE.MeshBasicMaterial({ color: 0xffedd5 });
+            const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.03, 16, 16), deskLampBulbMat);
+            bulb.position.set(0, 0.3, 0.06);
+            lampGroup.add(bulb);
+
+            // Point Light from Lamp
+            deskLampLight = new THREE.PointLight(0xffb703, 1.8, 3.5);
+            deskLampLight.position.set(0, 0.28, 0.08);
+            deskLampLight.castShadow = true;
+            deskLampLight.shadow.bias = -0.001;
+            lampGroup.add(deskLampLight);
+
+            scene.add(lampGroup);
+        }
+
+        function createBookshelf() {
+            const shelfGroup = new THREE.Group();
+            shelfGroup.position.set(-1.7, 0, 0.8);
+            shelfGroup.rotation.y = Math.PI / 2;
+
+            const woodMat = new THREE.MeshStandardMaterial({ color: 0x3d2314, roughness: 0.8 });
+
+            // Frame
+            const frame = new THREE.Mesh(new THREE.BoxGeometry(0.8, 1.6, 0.3), woodMat);
+            frame.position.y = 0.8;
+            frame.castShadow = true;
+            frame.receiveShadow = true;
+            shelfGroup.add(frame);
+
+            // Shelves Cutouts / Book Items
+            const bookColors = [0xef4444, 0x3b82f6, 0x10b981, 0xf59e0b, 0x8b5cf6];
+            for (let s = 0; s < 3; s++) {
+                const shelfY = 0.4 + s * 0.45;
+                for (let b = 0; b < 6; b++) {
+                    const bookMat = new THREE.MeshStandardMaterial({ color: bookColors[(s + b) % bookColors.length] });
+                    const book = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.22, 0.18), bookMat);
+                    book.position.set(-0.25 + b * 0.08, shelfY, 0);
+                    book.castShadow = true;
+                    shelfGroup.add(book);
+                }
+            }
+
+            scene.add(shelfGroup);
+        }
+
+        function createDecorations() {
+            // Wall Clock on Back Wall
+            const clockGroup = new THREE.Group();
+            clockGroup.position.set(-0.8, 2.1, -1.97);
+
+            const clockFrame = new THREE.Mesh(
+                new THREE.CylinderGeometry(0.2, 0.2, 0.03, 32),
+                new THREE.MeshStandardMaterial({ color: 0x0f172a })
+            );
+            clockFrame.rotation.x = Math.PI / 2;
+
+            const clockFace = new THREE.Mesh(
+                new THREE.CircleGeometry(0.18, 32),
+                new THREE.MeshBasicMaterial({ color: 0xffffff })
+            );
+            clockFace.position.z = 0.016;
+
+            // Hands
+            const handMat = new THREE.MeshBasicMaterial({ color: 0x000000 });
+            clockHourHand = new THREE.Mesh(new THREE.PlaneGeometry(0.015, 0.08), handMat);
+            clockHourHand.position.z = 0.018;
+
+            clockMinuteHand = new THREE.Mesh(new THREE.PlaneGeometry(0.01, 0.12), handMat);
+            clockMinuteHand.position.z = 0.019;
+
+            clockSecondHand = new THREE.Mesh(new THREE.PlaneGeometry(0.005, 0.13), new THREE.MeshBasicMaterial({ color: 0xef4444 }));
+            clockSecondHand.position.z = 0.02;
+
+            clockGroup.add(clockFrame, clockFace, clockHourHand, clockMinuteHand, clockSecondHand);
+            scene.add(clockGroup);
+
+            // Wall Poster
+            const posterGeo = new THREE.PlaneGeometry(0.8, 1.1);
+            const posterCanvas = document.createElement('canvas');
+            posterCanvas.width = 256;
+            posterCanvas.height = 352;
+            const pCtx = posterCanvas.getContext('2d');
+            
+            // Sunset Abstract Art on Canvas
+            const grad = pCtx.createLinearGradient(0, 0, 0, 352);
+            grad.addColorStop(0, '#f97316');
+            grad.addColorStop(0.6, '#ec4899');
+            grad.addColorStop(1, '#4c1d95');
+            pCtx.fillStyle = grad;
+            pCtx.fillRect(0, 0, 256, 352);
+            pCtx.fillStyle = '#fef08a';
+            pCtx.beginPath();
+            pCtx.arc(128, 180, 50, 0, Math.PI * 2);
+            pCtx.fill();
+
+            const posterTex = new THREE.CanvasTexture(posterCanvas);
+            const posterMat = new THREE.MeshBasicMaterial({ map: posterTex });
+            const posterMesh = new THREE.Mesh(posterGeo, posterMat);
+            posterMesh.position.set(1.2, 1.8, -1.97);
+            scene.add(posterMesh);
+        }
+
+        function setupDeviceOrientation() {
+            if (window.DeviceOrientationEvent) {
+                window.addEventListener('deviceorientation', (event) => {
+                    if (event.alpha !== null) {
+                        state.isGyroAvailable = true;
+                    }
+                }, { once: true });
+            }
+        }
+
+        function toggleVRMode() {
+            // Request iOS 13+ sensor permissions if needed
+            if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+                DeviceOrientationEvent.requestPermission()
+                    .then(permissionState => {
+                        if (permissionState === 'granted') {
+                            state.isGyroAvailable = true;
+                        }
+                    })
+                    .catch(() => {});
+            }
+
+            state.isVR = !state.isVR;
+            audioFX.playClick();
+
+            if (state.isVR) {
+                // Request Fullscreen & Orientation Lock if supported
+                if (document.documentElement.requestFullscreen) {
+                    document.documentElement.requestFullscreen().catch(() => {});
+                }
+                if (screen.orientation && screen.orientation.lock) {
+                    screen.orientation.lock('landscape').catch(() => {});
+                }
+
+                document.body.classList.add('stereo-active');
+                statusText.innerText = "Mode: Google Cardboard VR (Gyro)";
+                btnVR.innerHTML = `Exit VR Mode`;
+                btnRecenter.classList.remove('hidden');
+            } else {
+                if (document.exitFullscreen && document.fullscreenElement) {
+                    document.exitFullscreen().catch(() => {});
+                }
+                document.body.classList.remove('stereo-active');
+                statusText.innerText = "Mode: Window / Orbit";
+                btnVR.innerHTML = `<svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M21 6H3c-1.1 0-2 .9-2 2v8c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm-10 7c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm6 0c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2z"/></svg> Google Cardboard VR`;
+                btnRecenter.classList.add('hidden');
+                
+                // Reset camera aspect
+                camera.aspect = window.innerWidth / window.innerHeight;
+                camera.updateProjectionMatrix();
+            }
+            onWindowResize();
+        }
+
+        function onWindowResize() {
+            const width = window.innerWidth;
+            const height = window.innerHeight;
+
+            camera.aspect = width / height;
+            camera.updateProjectionMatrix();
+
+            renderer.setSize(width, height);
+            stereoEffect.setSize(width, height);
+        }
+
+        function checkGazeInteraction(deltaTime) {
+            // Raycast from camera center
+            raycaster.setFromCamera(centerVector, camera);
+            const intersects = raycaster.intersectObjects(interactiveObjects, true);
+
+            if (intersects.length > 0) {
+                const hitObject = intersects[0].object;
+
+                if (currentTarget !== hitObject) {
+                    currentTarget = hitObject;
+                    gazeStartTime = performance.now();
+                } else {
+                    // Calculate gaze dwell progress (0.0 to 1.0)
+                    const elapsedTime = performance.now() - gazeStartTime;
+                    const progress = Math.min(elapsedTime / GAZE_DURATION, 1.0);
+
+                    // Update UI Gaze Ring Progress Bar
+                    const dashoffset = 100 - (progress * 100);
+                    gazeProgressCircle.style.strokeDashoffset = dashoffset;
+
+                    // Trigger action on 100% completion
+                    if (progress >= 1.0) {
+                        triggerObjectAction(currentTarget);
+                        gazeStartTime = performance.now() + 1000; // Delay re-trigger
+                        gazeProgressCircle.style.strokeDashoffset = 100;
+                    }
+                }
+            } else {
+                currentTarget = null;
+                gazeProgressCircle.style.strokeDashoffset = 100;
+            }
+        }
+
+        function onPointerDown(event) {
+            // Ignore clicks on header UI buttons
+            if (event.target.closest('#ui-overlay') || event.target.closest('#instructions-modal')) return;
+
+            raycaster.setFromCamera(centerVector, camera);
+            const intersects = raycaster.intersectObjects(interactiveObjects, true);
+            if (intersects.length > 0) {
+                triggerObjectAction(intersects[0].object);
+            }
+        }
+
+        function triggerObjectAction(object) {
+            audioFX.playClick();
+
+            if (object.name === "fan_switch") {
+                // Cycle Fan Speed: 0 -> 1 -> 2 -> 3 -> 0
+                state.fanSpeed = (state.fanSpeed + 1) % 4;
+                audioFX.setFanSpeed(state.fanSpeed);
+            } else if (object.name === "lamp_switch") {
+                // Toggle Desk Lamp
+                state.lampOn = !state.lampOn;
+                deskLampLight.visible = state.lampOn;
+                deskLampBulbMat.color.setHex(state.lampOn ? 0xffedd5 : 0x444444);
+            }
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            const delta = clock.getDelta();
+            const time = clock.getElapsedTime();
+
+            // 1. Controls Update
+            if (state.isVR || state.isGyroAvailable) {
+                deviceControls.update();
+            } else {
+                orbitControls.update();
+            }
+
+            // 2. Animate Oscillating Fan
+            if (fanBlades && state.fanSpeed > 0) {
+                // Rotate fan blades based on speed
+                fanBlades.rotation.z += delta * state.fanSpeed * 18;
+
+                // Side-to-side head oscillation
+                if (state.fanOscillating) {
+                    fanHeadGroup.rotation.y = Math.sin(time * 1.5) * 0.6;
+                }
+            }
+
+            // 3. Animate Wall Clock Hands
+            if (clockSecondHand) {
+                const now = new Date();
+                const secs = now.getSeconds() + now.getMilliseconds() / 1000;
+                const mins = now.getMinutes() + secs / 60;
+                const hrs = (now.getHours() % 12) + mins / 60;
+
+                clockSecondHand.rotation.z = -secs * (Math.PI / 30);
+                clockMinuteHand.rotation.z = -mins * (Math.PI / 30);
+                clockHourHand.rotation.z = -hrs * (Math.PI / 6);
+            }
+
+            // 4. Update Reticle Gaze Raycasting
+            checkGazeInteraction(delta);
+
+            // 5. Render Scene (Stereoscopic Split-Screen or Standard Single View)
+            if (state.isVR) {
+                stereoEffect.render(scene, camera);
+            } else {
+                renderer.render(scene, camera);
+            }
+        }
+    </script>
+</body>
+</html>
